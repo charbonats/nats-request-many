@@ -36,7 +36,7 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "async-timeout",
-    "nats-test-server@git+https://github.com/charbonats/nats-test-server.git",
+    "nats-test-server",
 ]
 docs = [
     "requests",
