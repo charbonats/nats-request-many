@@ -114,7 +114,7 @@ class RequestManyIterator:
         # Always increment the total received count
         self._total_received += 1
         # Check if this is a sentinel message
-        if self.stop_on_sentinel and msg.subject == "sentinel":
+        if self.stop_on_sentinel and msg.data == b"":
             if self._sub and not self._did_unsubscribe:
                 self._did_unsubscribe = True
                 await _unsubscribe(self._sub)
