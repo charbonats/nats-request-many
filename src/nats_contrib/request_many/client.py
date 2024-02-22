@@ -5,8 +5,8 @@ from typing import AsyncContextManager, AsyncIterator
 from nats.aio.client import Client as NATSClient
 from nats.aio.msg import Msg
 
-from .iterator import RequestManyIterator
 from .executor import RequestManyExecutor
+from .iterator import RequestManyIterator
 
 
 class Client(NATSClient):

@@ -107,6 +107,10 @@ class RequestManyIterator:
         #     raise err
         # This will raise an exception if an error occurred within the task
         msg = self._pending_task.result()
+        # Check message headers
+        # If the message is a 503 error, raise StopAsyncIteration
+        if msg.headers and msg.headers.get("Status") == "503":
+            raise StopAsyncIteration
         # Always increment the total received count
         self._total_received += 1
         # Check if this is a sentinel message

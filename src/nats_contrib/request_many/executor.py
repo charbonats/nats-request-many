@@ -4,7 +4,6 @@ import asyncio
 
 from nats.aio.client import Client
 from nats.aio.msg import Msg
-
 from nats.errors import BadSubscriptionError
 
 
@@ -69,6 +68,11 @@ class RequestManyExecutor:
             # Update the last received time.
             nonlocal last_received
             last_received = loop.time()
+            # Check message headers
+            # If the message is a 503 error, set the event and return.
+            if msg.headers and msg.headers.get("Status") == "503":
+                event.set()
+                return
             # If we're stopping on a sentinel message, check for it
             # and don't append the message to the list of responses.
             if stop_on_sentinel and msg.data == b"":
@@ -113,7 +117,9 @@ class RequestManyExecutor:
 
             # At this point the subscription is ready and all tasks are submitted
             # Publish the request.
-            await self.nc.publish(subject, payload or b"", reply=reply_inbox, headers=headers)
+            await self.nc.publish(
+                subject, payload or b"", reply=reply_inbox, headers=headers
+            )
             # Wait for the first task to complete.
             await asyncio.wait(
                 tasks,

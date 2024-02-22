@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, AsyncContextManager, AsyncIterator, Callable, Generic, TypeVar
 
-
 T = TypeVar("T")
 R = TypeVar("R")
 

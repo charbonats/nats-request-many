@@ -1,7 +1,8 @@
-from nats_contrib.request_many import Client
+import logging
+
 from nats.aio.msg import Msg
 
-import logging
+from nats_contrib.request_many import Client
 
 logging.basicConfig(
     level=logging.INFO,
