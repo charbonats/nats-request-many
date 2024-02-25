@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, AsyncIterator
+from typing import Any
 
 from nats.aio.client import Client
 from nats.aio.msg import Msg
@@ -64,7 +64,6 @@ class RequestManyIterator:
         self.stop_on_sentinel = stop_on_sentinel
         # Initialize the state of the request many iterator
         self._sub: Subscription | None = None
-        self._iterator: AsyncIterator[Msg] | None = None
         self._did_unsubscribe = False
         self._total_received = 0
         self._last_received = asyncio.get_event_loop().time()
@@ -86,39 +85,32 @@ class RequestManyIterator:
             raise StopAsyncIteration
         # Exit early if we received all the messages
         if self.max_count and self._total_received == self.max_count:
-            if self._sub and not self._did_unsubscribe:
-                self._did_unsubscribe = True
-                await _unsubscribe(self._sub)
+            await self.cleanup()
             raise StopAsyncIteration
         # Create a task to wait for the next message
-        task: asyncio.Task[Msg] = asyncio.create_task(self._iterator.__anext__())  # type: ignore
+        task: asyncio.Task[Msg] = asyncio.create_task(_fetch(self._sub))
         self._pending_task = task
         # Wait for the next message or any of the other tasks to complete
         await asyncio.wait(
             [self._pending_task, *self._tasks],
             return_when=asyncio.FIRST_COMPLETED,
         )
-        if self._pending_task.cancelled():
+        # If the pending task is cancelled or not done, raise StopAsyncIteration
+        if self._pending_task.cancelled() or not self._pending_task.done():
+            await self.cleanup()
             raise StopAsyncIteration
-        if not self._pending_task.done():
-            self._pending_task.cancel()
-            raise StopAsyncIteration
-        # if err := self._pending_task.exception():
-        #     raise err
         # This will raise an exception if an error occurred within the task
         msg = self._pending_task.result()
         # Check message headers
         # If the message is a 503 error, raise StopAsyncIteration
         if msg.headers and msg.headers.get("Status") == "503":
+            await self.cleanup()
             raise StopAsyncIteration
         # Always increment the total received count
         self._total_received += 1
-        # Check if this is a sentinel message
+        # Check if this is a sentinel message, and if so, raise StopAsyncIteration
         if self.stop_on_sentinel and msg.data == b"":
-            if self._sub and not self._did_unsubscribe:
-                self._did_unsubscribe = True
-                await _unsubscribe(self._sub)
-            # In which case, raise StopAsyncIteration and don't return the message
+            await self.cleanup()
             raise StopAsyncIteration
         # Return the message
         return msg
@@ -131,7 +123,6 @@ class RequestManyIterator:
             max_msgs=self.max_count or 0,
         )
         # Save the subscription and the iterator
-        self._iterator = sub.messages
         self._sub = sub
         # Add a task to wait for the max_wait time if needed
         if self.max_wait:
@@ -144,9 +135,7 @@ class RequestManyIterator:
                 while True:
                     await asyncio.sleep(interval)
                     if asyncio.get_event_loop().time() - self._last_received > interval:
-                        if self._sub and not self._did_unsubscribe:
-                            self._did_unsubscribe = True
-                            await _unsubscribe(self._sub)
+                        await self.cleanup()
                         return
 
             self._tasks.append(asyncio.create_task(check_interval()))
@@ -160,12 +149,19 @@ class RequestManyIterator:
 
     async def __aexit__(self, *args: Any, **kwargs: Any) -> None:
         """Unsubscribe from the inbox and cancel all the tasks."""
+        await self.cleanup()
+
+    async def cleanup(self) -> None:
+        """Unsubscribe from the inbox and cancel all the tasks."""
+        if self._did_unsubscribe:
+            return
+        self._did_unsubscribe = True
         for task in self._tasks:
             if not task.done():
                 task.cancel()
         if self._pending_task and not self._pending_task.done():
             self._pending_task.cancel()
-        if self._sub and not self._did_unsubscribe:
+        if self._sub:
             await _unsubscribe(self._sub)
 
 
@@ -175,3 +171,10 @@ async def _unsubscribe(sub: Subscription) -> None:
     except BadSubscriptionError:
         # It's possible that auto-unsubscribe has already been called.
         pass
+
+
+async def _fetch(sub: Subscription) -> Msg:
+    msg = await sub._pending_queue.get()  # pyright: ignore[reportPrivateUsage]
+    sub._pending_queue.task_done()  # pyright: ignore[reportPrivateUsage]
+    sub._pending_size -= len(msg.data)  # pyright: ignore[reportPrivateUsage]
+    return msg
